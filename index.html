@@ -24,7 +24,8 @@ main{padding-top:16px;padding-bottom:32px;display:grid;grid-template-columns:min
 #drop{position:absolute;inset:0;margin:10px;border:2px dashed var(--line);display:grid;place-content:center;justify-items:center;gap:8px;text-align:center;padding:20px;color:var(--mut)}
 #drop .row{justify-content:center;margin:6px 0 0}
 #drop b{color:var(--ink);font-size:20px}
-canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+canvas:active{cursor:grabbing}
 .frame video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);background:#000}
 .cambar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:8px;justify-content:center;padding:14px 10px;background:linear-gradient(transparent,rgba(0,0,0,.55))}
 .guide{position:absolute;left:24%;right:24%;top:8%;height:62%;border:2px dashed rgba(29,78,216,.75);border-radius:50%;pointer-events:none}
@@ -54,6 +55,12 @@ input[type=color]{width:44px;height:36px;padding:2px;border:1px solid var(--line
 .sl output{color:var(--mut);font-variant-numeric:tabular-nums}
 .sw{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .sw button{width:34px;height:34px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px var(--line);cursor:pointer;padding:0}
+.tip{margin:0 0 12px;font-size:14px;color:var(--mut)}
+.mv{gap:24px;align-items:center}
+.pad{display:grid;grid-template-columns:repeat(3,46px);grid-template-rows:repeat(3,46px);gap:6px}
+.pad .btn,.zm .btn{padding:0;font-size:18px;line-height:1;user-select:none;touch-action:none}
+.zm{display:flex;flex-direction:column;gap:6px}
+.zm .btn{width:46px;height:46px}
 .chk{display:flex;gap:8px;align-items:center;font-size:14px}
 .link{background:none;border:0;color:var(--blue);text-decoration:underline;cursor:pointer;padding:0}
 footer{padding-bottom:36px;color:var(--mut);font-size:14px}
@@ -115,7 +122,19 @@ footer{padding-bottom:36px;color:var(--mut);font-size:14px}
     </div>
 
     <div class="grp">
-      <h2>Position</h2>
+      <h2>Move and zoom your photo</h2>
+      <p class="tip">Drag the photo with your finger or mouse to move it. Pinch with two fingers, or use the mouse wheel, to zoom.</p>
+      <div class="row mv">
+        <div class="pad" role="group" aria-label="Move photo">
+          <span></span><button class="btn" type="button" data-m="0,-1.2,0" aria-label="Move photo up" title="Move up">▲</button><span></span>
+          <button class="btn" type="button" data-m="-1.2,0,0" aria-label="Move photo left" title="Move left">◀</button><span></span><button class="btn" type="button" data-m="1.2,0,0" aria-label="Move photo right" title="Move right">▶</button>
+          <span></span><button class="btn" type="button" data-m="0,1.2,0" aria-label="Move photo down" title="Move down">▼</button><span></span>
+        </div>
+        <div class="zm" role="group" aria-label="Zoom">
+          <button class="btn" type="button" data-m="0,0,1.02" aria-label="Zoom in" title="Zoom in">+</button>
+          <button class="btn" type="button" data-m="0,0,0.98" aria-label="Zoom out" title="Zoom out">−</button>
+        </div>
+      </div>
       <div id="pos" class="two"></div>
       <div class="row">
         <button class="btn" id="fit" type="button">Auto-fit head and shoulders</button>
@@ -264,7 +283,7 @@ function edgeCut(){ /* fallback: removes a plain background by flood-filling fro
 async function removeBg(){
   if(!S.src)return;
   busy(1,'Scanning face and body…');
-  try{S.cut=await aiCut();say('Background removed. Pick a colour, then fine-tune below.')}
+  try{S.cut=await aiCut();say('Background removed. Drag the photo to move it, or use the arrows and + / − buttons. Then pick a background colour.')}
   catch(e){try{S.cut=edgeCut()}catch(_){S.cut=null}say('The AI model could not load, so a quick colour-based removal was used. It works best on plain backgrounds.')}
   autoFit();busy(0);draw();
 }
@@ -331,6 +350,28 @@ function draw(){
   cx.globalAlpha=1;cx.fillStyle=$('bg').value;cx.fillRect(0,0,W,H);cx.drawImage(L,0,0);
   mark();
 }
+
+/* ---------- move and zoom ---------- */
+const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+function nudge(dx,dy){setSl('px',clamp(+$('px').value+dx,-100,100));setSl('py',clamp(+$('py').value+dy,-100,100));redraw()}
+function zoomBy(f){setSl('zoom',clamp(+$('zoom').value*f,40,300));redraw()}
+document.querySelectorAll('[data-m]').forEach(b=>{
+  let t;const go=()=>{if(!S.src)return;const [a,c,z]=b.dataset.m.split(',').map(Number);z?zoomBy(z):nudge(a,c)},stop=()=>clearInterval(t);
+  b.addEventListener('pointerdown',e=>{e.preventDefault();stop();go();t=setInterval(go,70)});
+  ['pointerup','pointerleave','pointercancel'].forEach(ev=>b.addEventListener(ev,stop));
+  b.addEventListener('keydown',e=>{if(e.key=='Enter'||e.key==' '){e.preventDefault();go()}});
+});
+const pts=new Map();let pd=0;
+const pinch=()=>{const [a,b]=[...pts.values()];return Math.hypot(a[0]-b[0],a[1]-b[1])};
+cv.addEventListener('pointerdown',e=>{if(!S.src)return;cv.setPointerCapture(e.pointerId);pts.set(e.pointerId,[e.clientX,e.clientY]);pd=pts.size==2?pinch():0});
+cv.addEventListener('pointermove',e=>{
+  if(!pts.has(e.pointerId))return;
+  const p=pts.get(e.pointerId),r=cv.getBoundingClientRect();pts.set(e.pointerId,[e.clientX,e.clientY]);
+  if(pts.size==1)nudge((e.clientX-p[0])/r.width*100,(e.clientY-p[1])/r.height*100);
+  else if(pts.size==2){const d=pinch();if(pd)zoomBy(d/pd);pd=d}
+});
+['pointerup','pointercancel'].forEach(ev=>cv.addEventListener(ev,e=>{pts.delete(e.pointerId);pd=0}));
+cv.addEventListener('wheel',e=>{if(!S.src)return;e.preventDefault();zoomBy(e.deltaY<0?1.06:1/1.06)},{passive:false});
 
 /* ---------- controls ---------- */
 document.addEventListener('input',e=>{if(e.target.type=='range')$('o_'+e.target.id).textContent=e.target.value;redraw()});
